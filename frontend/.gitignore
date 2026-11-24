@@ -40,3 +40,6 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+
+# 环境变量示例文件需要提交，便于他人配置
+!.env.example

@@ -38,12 +38,47 @@ Maven 多模块（`sky-common` / `sky-pojo` / `sky-server`）。
 - 接口文档：http://localhost:8081/doc.html
 - 管理员账号：admin / 123456
 
+## 前后端联调
+
+前端已接入后端真实接口，数据链路如下：
+
+| 前端行为 | 调用接口 | 说明 |
+| --- | --- | --- |
+| 加载菜单 | `GET /user/category/list?type=1`、`GET /user/dish/list` | 公开只读接口，未登录可访问；失败时自动降级为内置示例菜单并提示 |
+| 提交订单 | `POST /user/shoppingCart/clean` → `POST /user/shoppingCart/add` → `POST /user/addressBook` → `POST /user/order/submit` | 订单真实写入 `orders` / `order_detail`，购物车随后清空，不发起支付 |
+
+### 关于登录
+
+C 端正式登录依赖微信 `code2session`，本地没有 appid/appsecret 无法完成，
+因此后端提供了一个**仅在 dev profile 生效**的联调登录端点：
+
+```
+POST /user/user/dev-login   → 返回与微信登录同结构的用户端 JWT
+```
+
+对应实现：`backend/sky-server/src/main/java/com/sky/controller/user/DevUserController.java`
+（标注 `@Profile("dev")`，非 dev 环境不会加载）。前端 `lib/api.ts` 在缺少令牌时会自动调用它。
+
+### 其他为联调做的改动
+
+- `WebMvcConfiguration`：`/user/dish/list` 与 `/user/category/list` 加入 JWT 白名单（菜单属公开数据），
+  并为 `http://localhost:*` / `http://127.0.0.1:*` 增加 CORS 规则。
+- 前端 API 层集中在 `frontend/lib/api.ts`，接口地址由 `NEXT_PUBLIC_API_BASE` 配置
+  （见 `frontend/.env.example`），默认 `http://localhost:8081`。
+- 结算抽屉新增收货信息表单（收货人 / 手机号 / 详细地址），提交前做本地校验。
+
+### 尚未覆盖
+
+- 微信支付、退款、OSS 图片上传仍为占位实现，未联调。
+- 后端菜品无图片字段，前端商品卡片用分类色块 + 文字替代。
+- 套餐分类（`type=2`）与 `/user/setmeal/list` 未接入，页面仅展示菜品。
+
 ## 注意
 
 - `backend/sky-server/src/main/resources/application-dev.yml` 中的微信支付、
   阿里云 OSS 配置均为**占位值**，真实密钥请通过环境变量注入，切勿提交到仓库。
 - `application-dev.yml` 中数据库与 Redis 的 `123456` 仅为本地开发默认口令。
-- 前端的开锅时间、配送半径、每日限量、商品价格与故事内容均为方案示例，
-  上线前需替换为真实经营信息；「提交预订单」目前为前端演示，不发起真实支付。
-- 前后端接口尚未联调：前端可在 `frontend/app/page.tsx` 的 `submitDemoOrder()`
-  中接入后端下单接口，并将 `products` 替换为菜品接口返回的数据。
+- 前端的开锅时间、配送半径、每日限量与故事内容均为方案示例，上线前需替换为真实经营信息。
+- 服务端启动依赖 Redis 密码与配置一致（`application-dev.yml` 中为 `123456`），
+  本地 Redis 需以 `--requirepass 123456` 启动，否则后端访问 Redis 会报 `ERR Client sent AUTH`。
+

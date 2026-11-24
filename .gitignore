@@ -32,3 +32,6 @@ target/
 *.zip
 *.7z
 *.exe
+
+# TypeScript 增量构建信息
+*.tsbuildinfo

@@ -1,11 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  addToBackendCart,
+  clearBackendCart,
+  ensureAddress,
+  ensureUserToken,
+  fetchCategories,
+  fetchDishes,
+  submitOrder,
+  type ApiDish,
+  type ApiOrderSubmitVO,
+} from "../lib/api";
 
 type Product = {
   id: number;
   name: string;
-  category: "今晚必点" | "花生" | "毛豆";
+  categoryId: number;
+  category: string;
   price: number;
   original?: number;
   weight: string;
@@ -16,32 +28,110 @@ type Product = {
   icon: string;
 };
 
-const products: Product[] = [
-  { id: 1, name: "新客花毛双拼", category: "今晚必点", price: 29.9, original: 36, weight: "花生250g + 毛豆250g", serves: "1–2人", note: "一次吃到两种鲜，口味可选", badge: "首单推荐", tone: "sun", icon: "双" },
-  { id: 2, name: "一家人分享盆", category: "今晚必点", price: 49.9, original: 58, weight: "花生500g + 毛豆500g", serves: "3–4人", note: "一家人围坐，刚好一大盆", badge: "本店销冠", tone: "leaf", icon: "家" },
-  { id: 3, name: "朋友局畅吃盆", category: "今晚必点", price: 69.9, original: 82, weight: "三味组合1500g", serves: "5–6人", note: "看球、喝酒、朋友聚会不冷场", badge: "聚会装", tone: "chili", icon: "聚" },
-  { id: 4, name: "五香水煮花生", category: "花生", price: 14.9, weight: "500g", serves: "1–2人", note: "八角桂皮慢煮，绵糯入味", tone: "peanut", icon: "香" },
-  { id: 5, name: "麻辣水煮花生", category: "花生", price: 16.9, weight: "500g", serves: "1–2人", note: "香麻在前，回辣在后", tone: "chili", icon: "辣" },
-  { id: 6, name: "盐水脆嫩毛豆", category: "毛豆", price: 12.9, weight: "500g", serves: "1–2人", note: "清香微咸，保留豆子的甜", tone: "leaf", icon: "鲜" },
-  { id: 7, name: "蒜香毛豆", category: "毛豆", price: 14.9, weight: "500g", serves: "1–2人", note: "蒜香浓郁，越剥越上瘾", tone: "jade", icon: "蒜" },
+/** 后端不可用时的兜底菜单（与设计稿一致的示例数据） */
+const fallbackProducts: Product[] = [
+  { id: 1, categoryId: 0, name: "新客花毛双拼", category: "今晚必点", price: 29.9, original: 36, weight: "花生250g + 毛豆250g", serves: "1–2人", note: "一次吃到两种鲜，口味可选", badge: "首单推荐", tone: "sun", icon: "双" },
+  { id: 2, categoryId: 0, name: "一家人分享盆", category: "今晚必点", price: 49.9, original: 58, weight: "花生500g + 毛豆500g", serves: "3–4人", note: "一家人围坐，刚好一大盆", badge: "本店销冠", tone: "leaf", icon: "家" },
+  { id: 3, categoryId: 0, name: "朋友局畅吃盆", category: "今晚必点", price: 69.9, original: 82, weight: "三味组合1500g", serves: "5–6人", note: "看球、喝酒、朋友聚会不冷场", badge: "聚会装", tone: "chili", icon: "聚" },
+  { id: 4, categoryId: 0, name: "五香水煮花生", category: "花生", price: 14.9, weight: "500g", serves: "1–2人", note: "八角桂皮慢煮，绵糯入味", tone: "peanut", icon: "香" },
+  { id: 5, categoryId: 0, name: "麻辣水煮花生", category: "花生", price: 16.9, weight: "500g", serves: "1–2人", note: "香麻在前，回辣在后", tone: "chili", icon: "辣" },
+  { id: 6, categoryId: 0, name: "盐水脆嫩毛豆", category: "毛豆", price: 12.9, weight: "500g", serves: "1–2人", note: "清香微咸，保留豆子的甜", tone: "leaf", icon: "鲜" },
+  { id: 7, categoryId: 0, name: "蒜香毛豆", category: "毛豆", price: 14.9, weight: "500g", serves: "1–2人", note: "蒜香浓郁，越剥越上瘾", tone: "jade", icon: "蒜" },
 ];
 
-const categories = ["全部", "今晚必点", "花生", "毛豆"] as const;
+/** 分类 → 卡片视觉与规格文案（后端暂无图片与重量字段） */
+const CATEGORY_STYLE: Record<string, { tone: string; icon: string; weight: string; serves: string }> = {
+  水煮花生: { tone: "peanut", icon: "花", weight: "500g", serves: "1–2人" },
+  水煮毛豆: { tone: "leaf", icon: "豆", weight: "500g", serves: "1–2人" },
+  卤味熟食: { tone: "chili", icon: "卤", weight: "拼盘一份", serves: "2–3人" },
+  礼盒装: { tone: "sun", icon: "礼", weight: "礼盒装", serves: "3–4人" },
+  组合套餐: { tone: "jade", icon: "套", weight: "套餐一份", serves: "3–4人" },
+};
+
+function toProduct(dish: ApiDish, categoryName: string): Product {
+  const style = CATEGORY_STYLE[categoryName] || {
+    tone: "sun",
+    icon: dish.name.slice(0, 1),
+    weight: "当日现煮",
+    serves: "1–2人",
+  };
+  const isMix = dish.name.includes("双拼");
+  return {
+    id: dish.id,
+    categoryId: dish.categoryId,
+    name: dish.name,
+    category: categoryName,
+    price: Number(dish.price),
+    weight: style.weight,
+    serves: style.serves,
+    note: dish.description || "当天现煮，出锅即送",
+    badge: isMix ? "两种都要" : undefined,
+    tone: isMix ? "sun" : style.tone,
+    icon: isMix ? "双" : style.icon,
+  };
+}
 
 function money(value: number) {
   return value.toFixed(value % 1 === 0 ? 0 : 1);
 }
 
 export default function Home() {
-  const [category, setCategory] = useState<(typeof categories)[number]>("全部");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categoryNames, setCategoryNames] = useState<string[]>([]);
+  const [menuState, setMenuState] = useState<"loading" | "ready" | "fallback">("loading");
+  const [category, setCategory] = useState<string>("全部");
   const [cart, setCart] = useState<Record<number, number>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [storyOpen, setStoryOpen] = useState(false);
   const [toast, setToast] = useState("");
 
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [consignee, setConsignee] = useState("");
+  const [phone, setPhone] = useState("");
+  const [detail, setDetail] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [placedOrder, setPlacedOrder] = useState<ApiOrderSubmitVO | null>(null);
+
   useEffect(() => {
     const saved = window.localStorage.getItem("huamao-cart");
     if (saved) setCart(JSON.parse(saved));
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const categories = await fetchCategories(1);
+        const dishes = await fetchDishes();
+        if (cancelled) return;
+
+        const nameById = new Map<number, string>();
+        categories.forEach((item) => nameById.set(item.id, item.name));
+
+        const mapped = dishes
+          .map((dish) => toProduct(dish, nameById.get(dish.categoryId) || "今晚菜单"))
+          .sort((a, b) => a.categoryId - b.categoryId || a.id - b.id);
+
+        if (!mapped.length) {
+          setProducts(fallbackProducts);
+          setCategoryNames(["全部", ...Array.from(new Set(fallbackProducts.map((item) => item.category)))]);
+          setMenuState("fallback");
+          return;
+        }
+
+        const used = new Set(mapped.map((item) => item.category));
+        setProducts(mapped);
+        setCategoryNames(["全部", ...categories.map((item) => item.name).filter((name) => used.has(name))]);
+        setMenuState("ready");
+      } catch {
+        if (cancelled) return;
+        setProducts(fallbackProducts);
+        setCategoryNames(["全部", ...Array.from(new Set(fallbackProducts.map((item) => item.category)))]);
+        setMenuState("fallback");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -50,12 +140,12 @@ export default function Home() {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(""), 2200);
+    const timer = window.setTimeout(() => setToast(""), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
   const visible = products.filter((item) => category === "全部" || item.category === category);
-  const cartItems = useMemo(() => products.filter((item) => cart[item.id]).map((item) => ({ ...item, quantity: cart[item.id] })), [cart]);
+  const cartItems = useMemo(() => products.filter((item) => cart[item.id]).map((item) => ({ ...item, quantity: cart[item.id] })), [products, cart]);
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const delivery = subtotal >= 49 || subtotal === 0 ? 0 : 5;
@@ -78,10 +168,44 @@ export default function Home() {
     document.getElementById("menu")?.scrollIntoView({ behavior: "smooth" });
   }
 
-  function submitDemoOrder() {
-    if (!cartCount) return;
-    setCartOpen(false);
-    setToast("预订单已生成 · 演示版本");
+  /** 提交预订单：写入后端 orders / order_detail，不发起支付 */
+  async function submitRealOrder() {
+    if (!cartCount || submitting) return;
+    if (!consignee.trim()) {
+      setToast("请填写收货人");
+      return;
+    }
+    if (!/^1\d{10}$/.test(phone.trim())) {
+      setToast("请填写 11 位手机号");
+      return;
+    }
+    if (detail.trim().length < 5) {
+      setToast("请填写详细地址（至少 5 个字）");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await ensureUserToken();
+      await clearBackendCart();
+      for (const item of cartItems) {
+        await addToBackendCart(item.id, item.quantity);
+      }
+      const addressBookId = await ensureAddress({ consignee: consignee.trim(), phone: phone.trim(), detail: detail.trim() });
+      const order = await submitOrder({
+        addressBookId,
+        amount: Number((subtotal + delivery).toFixed(2)),
+        remark: "今晚花毛 · 网页预订单",
+      });
+      setPlacedOrder(order);
+      setCart({});
+      setCheckoutOpen(false);
+      setToast(`订单已提交 · ${order.orderNumber}`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "下单失败，请稍后重试");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -124,11 +248,13 @@ export default function Home() {
       <section className="menu-section" id="menu">
         <div className="section-head">
           <div><p className="eyebrow dark">TONIGHT&apos;S MENU · 今晚菜单</p><h2>不卖复杂，<br />只把几样煮到位。</h2></div>
-          <p className="section-intro">第一次来，选双拼；一家人，点分享盆；朋友多，直接上畅吃盆。每份都标清重量，不让“份”变成猜谜。</p>
+          <p className="section-intro">第一次来，选双拼；一家人，点分享盆；朋友多，直接上畅吃盆。每份都标清重量，不让&ldquo;份&rdquo;变成猜谜。</p>
         </div>
         <div className="category-row" role="tablist" aria-label="商品分类">
-          {categories.map((item) => <button key={item} role="tab" aria-selected={category === item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}
+          {categoryNames.map((item) => <button key={item} role="tab" aria-selected={category === item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}
         </div>
+        {menuState === "loading" && <p className="menu-status">正在从后厨取今晚的菜单…</p>}
+        {menuState === "fallback" && <p className="menu-status warn">实时菜单暂时连不上（后端 8081 未响应），下面是示例菜单，价格仅供预览。</p>}
         <div className="product-layout">
           <aside className="menu-image-card"><div className="menu-photo" /><div className="menu-image-copy"><span>今晚推荐</span><strong>一半花生，<br />一半毛豆。</strong><p>不用纠结，第一口就吃到两种鲜。</p></div></aside>
           <div className="product-grid">
@@ -152,7 +278,7 @@ export default function Home() {
         <div className="story-photo" role="img" aria-label="在家庭厨房里认真清洗花生与毛豆" />
         <div className="story-copy">
           <p className="eyebrow dark">ONE POT, ONE EVENING · 一锅的一天</p><h2>没有祖传秘方，<br />只有每天重复的小事。</h2>
-          <blockquote>“下午三点，水开始烧。花生一颗颗挑，毛豆一遍遍洗。我们不想把它做成放很久的零食，只想煮成附近人今晚餐桌上的一盆热气。”</blockquote>
+          <blockquote>&ldquo;下午三点，水开始烧。花生一颗颗挑，毛豆一遍遍洗。我们不想把它做成放很久的零食，只想煮成附近人今晚餐桌上的一盆热气。&rdquo;</blockquote>
           <div className="timeline"><div><time>15:00</time><span>挑洗当日食材</span></div><div><time>17:30</time><span>第一锅出锅</span></div><div><time>22:00</time><span>售完收摊</span></div></div>
           <button className="text-button" onClick={jumpToMenu}>去挑今晚这一锅 <span>↗</span></button>
         </div>
@@ -161,9 +287,9 @@ export default function Home() {
       <section className="scene-section">
         <div className="scene-intro"><p className="eyebrow dark">FOR REAL MOMENTS · 为真实的夜晚</p><h2>好吃，也要有人一起吃。</h2></div>
         <div className="scene-grid">
-          <article><span>01</span><h3>两个人追剧</h3><p>不用点满一桌，双拼刚好陪完两集。</p><button onClick={() => add(1)}>选新客双拼 →</button></article>
-          <article><span>02</span><h3>一家人聊聊天</h3><p>放在桌中间，剥着剥着话就多了。</p><button onClick={() => add(2)}>选分享盆 →</button></article>
-          <article><span>03</span><h3>朋友来看球</h3><p>嘴不能闲，气氛也不能断。</p><button onClick={() => add(3)}>选畅吃盆 →</button></article>
+          <article><span>01</span><h3>两个人追剧</h3><p>不用点满一桌，双拼刚好陪完两集。</p><button onClick={() => products[0] && add(products[0].id)}>选新客双拼 →</button></article>
+          <article><span>02</span><h3>一家人聊聊天</h3><p>放在桌中间，剥着剥着话就多了。</p><button onClick={() => products[1] && add(products[1].id)}>选分享盆 →</button></article>
+          <article><span>03</span><h3>朋友来看球</h3><p>嘴不能闲，气氛也不能断。</p><button onClick={() => products[2] && add(products[2].id)}>选畅吃盆 →</button></article>
         </div>
       </section>
 
@@ -173,13 +299,30 @@ export default function Home() {
       <button className={`mobile-cart ${cartCount ? "show" : ""}`} onClick={() => setCartOpen(true)}><span><b>{cartCount}</b> 件 · ¥{money(subtotal)}</span><strong>去结算 →</strong></button>
 
       {cartOpen && <div className="overlay" role="dialog" aria-modal="true" aria-label="购物车">
-        <button className="overlay-bg" aria-label="关闭购物车" onClick={() => setCartOpen(false)} />
+        <button className="overlay-bg" aria-label="关闭购物车" onClick={() => { setCartOpen(false); setCheckoutOpen(false); }} />
         <aside className="cart-drawer">
-          <div className="drawer-head"><div><small>TONIGHT&apos;S POT</small><h2>今晚这一锅</h2></div><button onClick={() => setCartOpen(false)} aria-label="关闭">×</button></div>
-          {cartItems.length ? <>
+          <div className="drawer-head"><div><small>TONIGHT&apos;S POT</small><h2>今晚这一锅</h2></div><button onClick={() => { setCartOpen(false); setCheckoutOpen(false); }} aria-label="关闭">×</button></div>
+
+          {placedOrder ? <div className="order-done">
+            <span>已下单</span>
+            <h3>后厨收到这一锅了</h3>
+            <p>订单号 <b>{placedOrder.orderNumber}</b></p>
+            <p>应付 ¥{money(Number(placedOrder.orderAmount))} · 到店/配送前会电话确认</p>
+            <small>演示环境：订单已写入后端数据库，未发起真实支付</small>
+            <button onClick={() => { setPlacedOrder(null); setCartOpen(false); }}>好的，再来一锅</button>
+          </div> : checkoutOpen ? <div className="checkout-form">
+            <p className="form-hint">填一次收货信息，之后就记住了</p>
+            <label>收货人<input value={consignee} onChange={(e) => setConsignee(e.target.value)} placeholder="怎么称呼你" /></label>
+            <label>手机号<input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="11 位手机号" inputMode="numeric" /></label>
+            <label>详细地址<textarea value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="小区 / 楼栋 / 门牌号" rows={2} /></label>
+            <div className="cart-total"><span>合计</span><strong><i>¥</i>{money(subtotal + delivery)}</strong></div>
+            <button className="checkout" onClick={submitRealOrder} disabled={submitting}>{submitting ? "正在提交…" : "确认下单"} <span>→</span></button>
+            <button className="back-link" onClick={() => setCheckoutOpen(false)}>回到这一锅</button>
+            <p className="demo-note">演示环境不会发起真实支付，但订单会真实写入后端</p>
+          </div> : cartItems.length ? <>
             <div className="cart-list">{cartItems.map((item) => <div className="cart-line" key={item.id}><div className={`mini-visual ${item.tone}`}>{item.icon}</div><div><strong>{item.name}</strong><small>{item.weight}</small><b>¥{money(item.price)}</b></div><div className="stepper"><button onClick={() => change(item.id, -1)}>−</button><span>{item.quantity}</span><button onClick={() => change(item.id, 1)}>＋</button></div></div>)}</div>
             <div className="delivery-note"><span>附近配送</span><strong>{delivery ? `¥${delivery}` : "已免配送费"}</strong>{subtotal < 49 && <small>再点 ¥{money(49 - subtotal)} 免配送费</small>}</div>
-            <div className="cart-total"><span>合计</span><strong><i>¥</i>{money(subtotal + delivery)}</strong></div><button className="checkout" onClick={submitDemoOrder}>提交预订单 <span>→</span></button><p className="demo-note">演示版本不会发起真实支付</p>
+            <div className="cart-total"><span>合计</span><strong><i>¥</i>{money(subtotal + delivery)}</strong></div><button className="checkout" onClick={() => setCheckoutOpen(true)}>提交预订单 <span>→</span></button><p className="demo-note">演示版本不会发起真实支付</p>
           </> : <div className="empty-cart"><span>一锅</span><h3>今晚还没选好</h3><p>先挑一份花毛双拼，尝尝两种鲜。</p><button onClick={() => { setCartOpen(false); jumpToMenu(); }}>去看菜单</button></div>}
         </aside>
       </div>}

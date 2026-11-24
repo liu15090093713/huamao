@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurationSupport;
@@ -45,8 +46,27 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
 
         registry.addInterceptor(jwtTokenUserInterceptor)
                 .addPathPatterns("/user/**")
+                // 登录相关：微信登录 + 本地联调登录
                 .excludePathPatterns("/user/user/login")
-                .excludePathPatterns("/user/shop/status");
+                .excludePathPatterns("/user/user/dev-login")
+                .excludePathPatterns("/user/shop/status")
+                // 菜单为公开只读数据，未登录也应能浏览（点单页首屏依赖）
+                .excludePathPatterns("/user/dish/list")
+                .excludePathPatterns("/user/category/list");
+    }
+
+    /**
+     * 本地联调跨域配置：前端 dev server（vite，默认 5173）访问后端 8081
+     */
+    @Override
+    protected void addCorsMappings(CorsRegistry registry) {
+        log.info("开始配置跨域规则...");
+        registry.addMapping("/**")
+                .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true)
+                .maxAge(3600);
     }
 
     @Bean
