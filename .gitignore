@@ -1,0 +1,34 @@
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Node / 前端构建产物
+node_modules/
+.next/
+.wrangler/
+.sites-runtime/
+npm-debug.log*
+yarn-error.log*
+
+# Java / Maven
+target/
+*.class
+*.jar
+!backend/.mvn/wrapper/*.jar
+
+# 运行时数据与日志
+.runtime/
+*.log
+
+# 本地环境变量（含密钥，禁止提交）
+.env
+.env.local
+.env.*.local
+
+# 压缩包与安装程序
+*.zip
+*.7z
+*.exe

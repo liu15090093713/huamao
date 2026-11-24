@@ -1,0 +1,4 @@
+@echo off
+rem ???????????? (8081)
+cd /d "%~dp0"
+java -jar "sky-server\target\sky-server-1.0-SNAPSHOT.jar"
